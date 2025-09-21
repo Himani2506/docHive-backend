@@ -1,0 +1,6 @@
+venv/
+models/
+archive/
+out/
+__pycache__/
+tests/
