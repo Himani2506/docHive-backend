@@ -8,6 +8,7 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from services.etl_service import ETLPipeline
 import json
+from fastapi import Request
 from fpdf import FPDF
 import glob
 
@@ -83,7 +84,8 @@ async def upload(file: UploadFile = File(...)):
             os.remove(temp_file_path)
 
 @router.post("/chat")
-async def ChatBot(input):
+async def ChatBot(request: Request):
+    
     
     gemini = genai.GenerativeModel("gemini-2.0-flash", safety_settings={
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -93,10 +95,10 @@ async def ChatBot(input):
     })
     
     # message, documentContext, conversationHistory
-    input = json.loads(input)
-    document_context = input["documentContext"]
-    conversation_history = input["conversationHistory"]
-    message = input["message"]
+    data = await request.json()
+    document_context = data.get("documentContext")
+    conversation_history = data.get("conversationHistory")
+    message = data.get("message")
 
     try:
 

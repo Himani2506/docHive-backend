@@ -34,7 +34,7 @@ class ETLPipeline:
         self.gemini = genai.GenerativeModel("gemini-2.0-flash")
         os.makedirs(self.page_image_dir, exist_ok=True)
         os.makedirs(self.parsed_sections_dir, exist_ok=True)
-        os.environ["GOOGLE_API_KEY"] = "AIzaSyDryzLjl84tQcdIqdXA_RwI2-KXGQMh4M0"
+        os.environ["GOOGLE_API_KEY"] = "AIzaSyDNWii5DoKOjnBdci9BOc-92pb0HtyyDpM"
         genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
     def _render_pdf_to_all_images(self, pdf_path: str, base_filename: str, dpi: int) -> List[str]:
@@ -420,8 +420,13 @@ Now, process the following [INPUT DOCUMENT] and generate the complete analytical
 
 [INPUT DOCUMENT]:
 """ + str(input_json)
-
-        response = self.gemini.generate_content(prompt)
+        
+        print(1)
+        try:
+          response = self.gemini.generate_content(prompt)
+        except Exception as e:
+            print(e)
+        print(2)
         response = response.text.strip()[7:-3]
         json_output = json.loads(response)
 

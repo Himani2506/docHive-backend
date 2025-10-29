@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from fastapi import Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-import lmstudio as lms
 import json
 from datetime import date
 
