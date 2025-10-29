@@ -419,7 +419,7 @@ You must follow these steps:
 Now, process the following [INPUT DOCUMENT] and generate the complete analytical JSON output.
 
 [INPUT DOCUMENT]:
-""" + input_json
+""" + str(input_json)
 
         response = self.gemini.generate_content(prompt)
         response = response.text.strip()[7:-3]
