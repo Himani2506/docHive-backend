@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import time
 from services.etl_service import ETLPipeline
-
+import json
 from fpdf import FPDF
 import glob
 
@@ -49,7 +49,7 @@ async def upload(file: UploadFile = File(...)):
             temp_file_path = temp_file.name
     finally:
         file.file.close()
-    final_json_output = []
+    initial_json_output = []
     try:
         image_paths = etl_pipeline.convert_document_to_images(temp_file_path, file.filename)
         for i, image_path in enumerate(image_paths):
@@ -57,10 +57,13 @@ async def upload(file: UploadFile = File(...)):
             base_image_name = os.path.splitext(os.path.basename(image_path))[0]
             page_specific_output_dir = os.path.join(PARSED_SECTIONS_DIR, base_image_name)
             parsed_content = etl_pipeline.parse_image_layout(image_path, page_specific_output_dir)
-            final_json_output.append({
+            initial_json_output.append({
                 "page no": page_num,
                 "content": parsed_content
             })
+
+            final_json_output = etl_pipeline.MDocAgent(initial_json_output)
+
         end = time.time()
         print(f"Total processing time: {end - start:.2f} seconds")
         return JSONResponse(content=final_json_output)

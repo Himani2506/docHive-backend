@@ -1,24 +1,41 @@
 from typing import List
 import os
 import cv2
+import json
 import tempfile
 import subprocess
 import fitz
 import shutil
 from PIL import Image
+import google.generativeai as genai
 import pytesseract
 from ultralytics import YOLO
 from fastapi import HTTPException
+from typing import TypedDict, List, Dict, Any, Optional, Annotated
+from pydantic import BaseModel, Field
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnablePassthrough
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain import hub
+
 
 class ETLPipeline:
+
     VISUAL_LABELS = ['Picture', 'Table', 'Formula']
 
     def __init__(self, model_path: str, page_image_dir: str, parsed_sections_dir: str):
         self.model = YOLO(model_path)
         self.page_image_dir = page_image_dir
         self.parsed_sections_dir = parsed_sections_dir
+        # self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3)
+        self.gemini = genai.GenerativeModel("gemini-2.0-flash")
         os.makedirs(self.page_image_dir, exist_ok=True)
         os.makedirs(self.parsed_sections_dir, exist_ok=True)
+        os.environ["GOOGLE_API_KEY"] = "AIzaSyDryzLjl84tQcdIqdXA_RwI2-KXGQMh4M0"
+        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
     def _render_pdf_to_all_images(self, pdf_path: str, base_filename: str, dpi: int) -> List[str]:
         image_paths = []
@@ -112,3 +129,300 @@ class ETLPipeline:
         except Exception as e:
             pass
         return page_content
+    
+    def MDocAgent(self, input_json):
+
+        prompt = """
+You are an expert-level legal analyst and data extraction engine. Your task is to meticulously read a raw, page-based JSON document, deeply understand its contents, and then convert it into a single, structured, analytical JSON output.
+You must follow these steps:
+    1. Read the entire [INPUT DOCUMENT] to understand its context, purpose, and all its details.
+    2. Populate the [TARGET SCHEMA] provided below. The structure of your output must follow this schema exactly.
+    3. Carefully study the [FEW-SHOT EXAMPLES] to see how different types of legal documents are transformed into the same final schema.
+
+[TARGET SCHEMA] - Your output MUST conform to this exact json schema :
+{
+  "document_analysis": {
+    "predicted_document_type": "",
+    "abstractive_summary": "",
+    "keywords": [],
+    "themes": []
+  },
+  "key_data_points": [
+    {
+      "entity_id": "",
+      "entity_type": "",
+      "label": "",
+      "attributes": [
+        { "key": "", "value": "" }
+      ]
+    }
+  ],
+  "key_clauses": [
+    {
+      "clause_type": "",
+      "summary": "",
+      "layman_implication": "",
+      "affected_entity_ids": [],
+      "analysis": [
+        {
+          "type": "",
+          "value": "",
+          "details": ""
+        }
+      ]
+    }
+  ],
+  "key_deadlines": [
+    {
+      "date": "",
+      "event": "",
+      "explanation": ""
+    }
+  ],
+  "legal_terminology": [
+    {
+      "term": "",
+      "explanation": ""
+    }
+  ]
+}
+
+[CORE INSTRUCTIONS]
+
+1. document_analysis:
+-predicted_document_type: Classify the document (e.g., "Commercial Lease", "Last Will", "NDA").
+-abstractive_summary: Write a 2-3 sentence high-level summary.
+-keywords: List key literal terms and names (e.g., "Landlord Corp.", "5-year term").
+-themes: List key conceptual topics (e.g., "Risk Allocation", "Financial Obligation", "Confidentiality").
+
+2. key_data_points ("The Facts"):
+-Extract all key "nouns": Parties, Locations, Amounts, and Dates.
+-Create a unique entity_id for each (e.g., "ent_001").
+-entity_type must be a general category (e.g., "Party", "Location", "Amount", "Date").
+-attributes must be a list of {"key": "...", "value": "..."} pairs describing that entity.
+
+3. key_clauses ("The Rules"):
+-Extract the main obligations, risks, permissions, and directives (e.g., "Indemnification", "Bequest").
+-Write a clear summary and a layman_implication (what it means for a normal person).
+-In affected_entity_ids, list the entity_ids from key_data_points that this clause affects. This is how you link "Rules" to "Facts".
+-analysis must be a list of {"type": "...", "value": "...", "details": "..."} pairs. The type can change based on the document (e.g., "Risk Level", "Fairness", "Clarity", "Condition").
+
+4. key_deadlines: Extract all time-based events, dates, or time periods.
+
+5. legal_terminology: Identify general legal jargon (e.g., "Indemnify," "Testator") and provide a simple explanation.
+
+
+[FEW-SHOT EXAMPLES]
+
+--- EXAMPLE 1: COMMERCIAL LEASE ---
+
+[INPUT 1](JSON):
+
+[
+  {
+    "page no": 1,
+    "content": [
+      {"tag": "heading", "content": "Commercial Lease Agreement"},
+      {"tag": "content", "content": "This agreement, made 2026-01-01, is between Apex Properties ('Lessor') and Beta Innovations Inc. ('Lessee')."},
+      {"tag": "content", "content": "Lessee shall pay a monthly rent of $5,000, due on the first day of each month."},
+      {"tag": "section", "content": "4. Indemnification"},
+      {"tag": "content", "content": "The Lessee agrees to indemnify and hold harmless the Lessor from any and all claims arising from the Lessee's use of the property."}
+    ]
+  }
+]
+
+[OUTPUT 1](JSON)
+
+{
+  "document_analysis": {
+    "predicted_document_type": "Commercial Lease Agreement",
+    "abstractive_summary": "A commercial lease agreement effective Jan 1, 2026, between Apex Properties (Lessor) and Beta Innovations Inc. (Lessee). The rent is $5,000 monthly.",
+    "keywords": ["Lease Agreement", "Apex Properties", "Beta Innovations Inc.", "Indemnification", "$5,000"],
+    "themes": ["Financial Obligation", "Risk Allocation", "Liability"]
+  },
+  "key_data_points": [
+    {
+      "entity_id": "ent_001",
+      "entity_type": "Party",
+      "label": "Apex Properties",
+      "attributes": [{"key": "role", "value": "Lessor"}]
+    },
+    {
+      "entity_id": "ent_002",
+      "entity_type": "Party",
+      "label": "Beta Innovations Inc.",
+      "attributes": [{"key": "role", "value": "Lessee"}]
+    },
+    {
+      "entity_id": "ent_003",
+      "entity_type": "Date",
+      "label": "2026-01-01",
+      "attributes": [{"key": "label", "value": "Effective Date"}]
+    },
+    {
+      "entity_id": "ent_004",
+      "entity_type": "Amount",
+      "label": "5000",
+      "attributes": [
+        {"key": "label", "value": "Monthly Rent"},
+        {"key": "currency", "value": "USD"},
+        {"key": "frequency", "value": "Monthly"}
+      ]
+    }
+  ],
+  "key_clauses": [
+    {
+      "clause_type": "Indemnification",
+      "summary": "The Lessee (Beta Innovations Inc.) must protect the Lessor (Apex Properties) from all legal claims related to their use of the property.",
+      "layman_implication": "If someone sues the landlord because of something you did, you have to pay all the legal costs and damages, not the landlord.",
+      "affected_entity_ids": ["ent_001", "ent_002"],
+      "analysis": [
+        {
+          "type": "Risk Level",
+          "value": "High (for Tenant)",
+          "details": "This is a one-sided clause that transfers all risk."
+        },
+        {
+          "type": "Fairness",
+          "value": "Lessor-Favorable",
+          "details": "Common in commercial leases but harsh for the tenant."
+        }
+      ]
+    }
+  ],
+  "key_deadlines": [
+    {
+      "date": "first day of each month",
+      "event": "Rent Payment Due",
+      "explanation": "This is the day rent must be paid to avoid being late."
+    }
+  ],
+  "legal_terminology": [
+    {
+      "term": "Lessor",
+      "explanation": "The formal, legal word for the 'Landlord'."
+    },
+    {
+      "term": "Lessee",
+      "explanation": "The formal, legal word for the 'Tenant'."
+    },
+    {
+      "term": "Indemnify",
+      "explanation": "A legal promise to pay for another person's losses or legal costs."
+    }
+  ]
+}
+
+
+--- EXAMPLE 2: LAST WILL & TESTAMENT ---
+
+[INPUT 2](JSON)
+
+[
+  {
+    "page no": 1,
+    "content": [
+      {"tag": "heading", "content": "Last Will and Testament of Jane Doe"},
+      {"tag": "content", "content": "I, Jane Doe, the Testator, being of sound mind, do hereby declare this my last will."},
+      {"tag": "section", "content": "1. Executor"},
+      {"tag": "content", "content": "I appoint my son, John Doe, as the Executor of my will. If he is unable to serve, I appoint Maria Garcia."},
+      {"tag": "section", "content": "2. Specific Bequest"},
+      {"tag": "content", "content": "I give my 1965 Ford Mustang to my son, John Doe."}
+    ]
+  }
+]
+
+[OUTPUT 2](JSON)
+
+{
+  "document_analysis": {
+    "predicted_document_type": "Last Will and Testament",
+    "abstractive_summary": "The last will of Jane Doe, appointing John Doe as Executor and making a specific bequest of a 1965 Ford Mustang to him.",
+    "keywords": ["Last Will", "Jane Doe", "John Doe", "Executor", "Bequest", "Maria Garcia"],
+    "themes": ["Estate Distribution", "Fiduciary Appointment", "Asset Transfer"]
+  },
+  "key_data_points": [
+    {
+      "entity_id": "ent_w01",
+      "entity_type": "Party",
+      "label": "Jane Doe",
+      "attributes": [{"key": "role", "value": "Testator"}]
+    },
+    {
+      "entity_id": "ent_w02",
+      "entity_type": "Party",
+      "label": "John Doe",
+      "attributes": [
+        {"key": "role", "value": "Executor"},
+        {"key": "role", "value": "Beneficiary"}
+      ]
+    },
+    {
+      "entity_id": "ent_w03",
+      "entity_type": "Party",
+      "label": "Maria Garcia",
+      "attributes": [{"key": "role", "value": "Alternate Executor"}]
+    },
+    {
+      "entity_id": "ent_w04",
+      "entity_type": "Asset",
+      "label": "1965 Ford Mustang",
+      "attributes": [{"key": "label", "value": "Specific Gift"}]
+    }
+  ],
+  "key_clauses": [
+    {
+      "clause_type": "Fiduciary Appointment (Executor)",
+      "summary": "Appoints John Doe as the Executor to manage the estate. Maria Garcia is the backup.",
+      "layman_implication": "John Doe is in charge of carrying out the will's instructions. If he can't, Maria Garcia takes over.",
+      "affected_entity_ids": ["ent_w01", "ent_w02", "ent_w03"],
+      "analysis": [
+        {
+          "type": "Clarity",
+          "value": "High",
+          "details": "The primary and alternate appointments are clear."
+        }
+      ]
+    },
+    {
+      "clause_type": "Specific Bequest",
+      "summary": "Grants the 1965 Ford Mustang specifically to John Doe.",
+      "layman_implication": "John Doe gets the car. This gift is handled before all other general assets are divided.",
+      "affected_entity_ids": ["ent_w02", "ent_w04"],
+      "analysis": [
+        {
+          "type": "Condition",
+          "value": "Outright",
+          "details": "The gift is given with no strings attached."
+        }
+      ]
+    }
+  ],
+  "key_deadlines": [],
+  "legal_terminology": [
+    {
+      "term": "Testator",
+      "explanation": "The legal term for the person who has made the will."
+    },
+    {
+      "term": "Executor",
+      "explanation": "The person appointed to 'execute' or carry out the instructions in the will."
+    },
+    {
+      "term": "Bequest",
+      "explanation": "A gift of personal property or assets made in a will."
+    }
+  ]
+}
+
+[YOUR TASK]
+Now, process the following [INPUT DOCUMENT] and generate the complete analytical JSON output.
+
+[INPUT DOCUMENT]:
+""" + input_json
+
+        response = self.gemini.generate_content(prompt)
+        response = response.text.strip()[7:-3]
+        json_output = json.loads(response)
+
+        return json_output
