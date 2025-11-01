@@ -13,13 +13,6 @@ from ultralytics import YOLO
 from fastapi import HTTPException
 from typing import TypedDict, List, Dict, Any, Optional, Annotated
 from pydantic import BaseModel, Field
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
-from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnablePassthrough
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain import hub
 
 
 class ETLPipeline:
